@@ -1,58 +1,97 @@
-"use client";
-import useSWR from "swr";
+type Slice = {
+  id: string;
+  title: string;
+  kind: "task" | "schedule";
+  start: string;
+  end: string;
+  column: "AM" | "PM";
+  color: string;
+};
 
-const fetcher = (url: string) => fetch(url).then(r => r.json());
+type Api = {
+  ok: boolean;
+  dailyId: string;
+  items: Slice[];
+  day: { d0: string; d12: string; d24: string; };
+};
 
-export default function DailyTimeline({ params }: { params: { id: string } }) {
-  const { data } = useSWR(`/api/daily/${params.id}`, fetcher);
-  if (!data) return <div>Loading...</div>;
+const pxPerMinute = 1; // 1分=1px（AM/PM 各720px）
 
-  const am = data.items.filter((x: any) => x.column === "AM");
-  const pm = data.items.filter((x: any) => x.column === "PM");
+function minutesBetween(a: Date, b: Date) {
+  return Math.max(0, Math.round((+b - +a) / 60000));
+}
 
-  const Grid = ({ column, items }: any) => (
-    <div style= flex: 1, borderLeft: "1px solid #eee", position: "relative", height: 720 >
-      {/* 15分刻み=24*15min=96マス。ここは簡略化して12時間=720分=1px/分で実装 */}
-      {/* 軸ラベルなどは省略 */}
-      {items.map((x: any) => {
-        const base = column === "AM" ? new Date(data.day.d0) : new Date(data.day.d12);
-        const px = (ms: number) => (ms / 60000); // 1min=1px
-        const top = px(+x.start - +base);
-        const height = px(+x.end - +x.start);
-        return (
-          <div key={x.id + x.start}
-            title={`${x.title}`}
-            style=
-              position: "absolute",
-              left: 8,
-              right: 8,
-              top,
-              height: Math.max(2, height),
-              background: x.color,
-              borderRadius: 4,
-              color: "white",
-              fontSize: 12,
-              padding: "2px 6px",
-              overflow: "hidden",
-              whiteSpace: "nowrap",
-              textOverflow: "ellipsis",
-            >
-            {x.title}
+function Column({ label, base, items }: { label: string; base: Date; items: Slice[] }) {
+  return (
+    <div style= flex: 1, border: "1px solid #eee", padding: 8 >
+      <div style= fontWeight: 600, marginBottom: 8 >{label}</div>
+      <div style= position: "relative", height: 720 * pxPerMinute >
+        {/* 時間の目盛り（任意） */}
+        {[...Array(13)].map((_, i) => (
+          <div key={i} style=
+            position: "absolute",
+            top: i * 60 * pxPerMinute,
+            left: 0, right: 0,
+            borderTop: "1px dashed #f0f0f0",
+            fontSize: 10, color: "#999"
+          >
+            {String(i).padStart(2,"0")}:00
           </div>
-        );
-      })}
+        ))}
+        {/* バー描画 */}
+        {items.map(s => {
+          const start = new Date(s.start);
+          const end = new Date(s.end);
+          const top = minutesBetween(base, start) * pxPerMinute;
+          const height = Math.max(2, minutesBetween(start, end) * pxPerMinute);
+          return (
+            <div key={s.id + s.start}
+              title={`${s.title} (${start.toLocaleTimeString()}–${end.toLocaleTimeString()})`}
+              style=
+                position: "absolute",
+                left: 8,
+                right: 8,
+                top,
+                height,
+                background: s.color,
+                borderRadius: 6,
+                color: "white",
+                padding: "4px 8px",
+                fontSize: 12,
+                overflow: "hidden",
+                whiteSpace: "nowrap",
+                textOverflow: "ellipsis",
+                boxShadow: "0 1px 3px rgba(0,0,0,0.2)"
+              
+            >
+              {s.title}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
+}
+
+export default async function Page({ params }: { params: { id: string } }) {
+  const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || "http://localhost:3000";
+  const res = await fetch(`${baseUrl}/api/daily/${params.id}`, { cache: "no-store" });
+  if (!res.ok) {
+    return <div style= padding: 16 >APIエラー: {res.status}</div>;
+  }
+  const data = (await res.json()) as Api;
+
+  const amBase = new Date(data.day.d0);
+  const pmBase = new Date(data.day.d12);
+  const amItems = data.items.filter(i => i.column === "AM");
+  const pmItems = data.items.filter(i => i.column === "PM");
 
   return (
-    <div style= display: "flex", gap: 12 >
-      <div style= width: 120 >
-        <div>AM 0:00–12:00</div>
-        <div>PM 12:00–24:00</div>
-      </div>
-      <div style= display: "flex", flex: 1, gap: 12 >
-        <Grid column="AM" items={am}/>
-        <Grid column="PM" items={pm}/>
+    <div style= padding: 16 >
+      <h2>Daily Timeline: {data.dailyId}</h2>
+      <div style= display: "flex", gap: 16 >
+        <Column label="AM 0:00–12:00" base={amBase} items={amItems} />
+        <Column label="PM 12:00–24:00" base={pmBase} items={pmItems} />
       </div>
     </div>
   );
